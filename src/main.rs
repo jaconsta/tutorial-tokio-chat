@@ -1,5 +1,5 @@
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt}, 
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, 
     net::TcpListener
 };
 
@@ -9,16 +9,23 @@ async fn main() {
     // .await -> rust keyword. suspend the excecution until Future resolves
     let (mut socket, _addr ) = listener.accept().await.unwrap();
     // _addr -> has the _ prefix -> unused
+    let (reader, mut writer) = socket.split(); // In order to solve ownership issue
+    // -> when writing back to the socket (end of loop)
+    
+    let mut reader = BufReader::new(reader); // Wraps any kind of reader and keeps it's own reader 
+    // providing Tokio's own functionality
+    // socket cannot be moved itself because there is only one in the loop
 
+    let mut line = String::new();
     loop {
-        let mut buffer = [0u8; 1024]; // 1kb (1024 bites)
-        let bytes_read = socket.read(&mut buffer).await.unwrap();
-        // .read is a treat -> all items implementing async read -> imp wholeread
-        // Need to use the asyncReadExt trait
-        // -> requires buffer to be mutable
-        socket.write_all(&buffer[..bytes_read]).await.unwrap();  
-        // Write every single byte from the input buffer into the output buffer 
-        // -> But tokio is handling some of the complexity
-        // -> with AsyncWriteExt
+        let bytes_read = reader.read_line(&mut line).await.unwrap();
+        // Need to use the AsyncBufReadExt extention trait
+        if bytes_read == 0 {
+            // The reader has reach the end of file. -> No more data left to read
+            break;
+        }
+        writer.write_all(line.as_bytes()).await.unwrap();  
+        // -> as bytes -> give the underlying bytes from the string.
+        line.clear();  // Clear the input buffer content
     }
 }
