@@ -8,15 +8,17 @@ use tokio::{
 async fn main() {
     let listener = TcpListener::bind("localhost:8080").await.unwrap();
 
-    let (tx, _rx) = broadcast::channel::<String>(10);
-    // Each task will 
-    // 10 -> Max numbers of queues in the channel
-    // ::<String> -> The generics handling
+    // let (tx, _rx) = broadcast::channel::<(String, SocketAddr)>(10);
+    let (tx, _rx) = broadcast::channel(10);
+    // Now that there are .send and .rcv methods used. The compiler can infer the types
+    // -> The Turbofish operator -> ::<T>()
+    // https://matematikaadit.github.io/posts/rust-turbofish.html
+
 
     loop { // This helps supporting multiple clients, but the socket still works one client at a time.
         // There is a block happening at task level.
         // Sleeps one task until IO resource is ready.
-        let (mut socket, _addr ) = listener.accept().await.unwrap();
+        let (mut socket, addr ) = listener.accept().await.unwrap();
         
         // Move tx properly into the loop
         let tx = tx.clone();
@@ -41,12 +43,14 @@ async fn main() {
                             // The reader has reach the end of file. -> No more data left to read
                             break;
                         }
-                        tx.send(line.clone()).unwrap();
+                        tx.send((line.clone(), addr)).unwrap();
                         line.clear();  // Clear the input buffer content
                     }
                     result = rx.recv() => {
-                        let msg = result.unwrap();
-                        writer.write_all(msg.as_bytes()).await.unwrap();  
+                        let (msg, sender_addr) = result.unwrap();
+                        if addr != sender_addr {
+                            writer.write_all(msg.as_bytes()).await.unwrap();  
+                        }
                     }
                 }
                 // -> as bytes -> give the underlying bytes from the string.
