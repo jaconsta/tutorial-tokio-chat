@@ -1,17 +1,28 @@
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, 
-    net::TcpListener
+    net::TcpListener,
+    sync::broadcast,
 };
 
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("localhost:8080").await.unwrap();
 
+    let (tx, _rx) = broadcast::channel::<String>(10);
+    // Each task will 
+    // 10 -> Max numbers of queues in the channel
+    // ::<String> -> The generics handling
+
     loop { // This helps supporting multiple clients, but the socket still works one client at a time.
         // There is a block happening at task level.
         // Sleeps one task until IO resource is ready.
         let (mut socket, _addr ) = listener.accept().await.unwrap();
         
+        // Move tx properly into the loop
+        let tx = tx.clone();
+        // rx cant be clone, instead needs to be created from tx.
+        let mut rx = tx.subscribe();
+
         tokio::spawn(async move { // Solves the task blocking
             // Move all client handling into its own idependent task.
             // async move -> async block -> the whole block is it's own Future
@@ -21,18 +32,24 @@ async fn main() {
             let mut reader = BufReader::new(reader); // Wraps any kind of reader and keeps it's own reader 
             // providing Tokio's own functionality
             // socket cannot be moved itself because there is only one in the loop
-
             let mut line = String::new();
             loop {
-                let bytes_read = reader.read_line(&mut line).await.unwrap();
-                // Need to use the AsyncBufReadExt extention trait
-                if bytes_read == 0 {
-                    // The reader has reach the end of file. -> No more data left to read
-                    break;
+                tokio::select! { // Like golang select
+                    // the await statements happen implicitly
+                    result = reader.read_line(&mut line) => {    
+                        if result.unwrap() == 0 {
+                            // The reader has reach the end of file. -> No more data left to read
+                            break;
+                        }
+                        tx.send(line.clone()).unwrap();
+                        line.clear();  // Clear the input buffer content
+                    }
+                    result = rx.recv() => {
+                        let msg = result.unwrap();
+                        writer.write_all(msg.as_bytes()).await.unwrap();  
+                    }
                 }
-                writer.write_all(line.as_bytes()).await.unwrap();  
                 // -> as bytes -> give the underlying bytes from the string.
-                line.clear();  // Clear the input buffer content
             }
         });
     }
